@@ -1,0 +1,324 @@
+---
+title: "Analysis hormonal pituitary data"
+author: "Klaus Gröbner, Martino Bernasconi"
+output: html_document
+---
+
+Data upload
+```{r}
+
+path<-"~/Documents/ETH/Eth_VI.SS21/BC_Epigenetic_Mechanisms_in_MentalHealth/Project_5_Materials-20210318/Data/"
+setwd(path)
+Pituitary_data<- read.csv("Pituitary_Data.csv", header= T)
+meta_pit <- read.csv("metadata_pit.csv")
+```
+Libraries upload
+```{r cars}
+library(ggplot2)
+library(limma)
+library(dplyr)
+```
+
+## Prepare the data for analyses
+Check whether the metadata ONLY contains the data we have in our data table. If there are additional samples stated in the metadata we removed them 
+
+```{r pressure, echo=T}
+identical(meta_pit$Name,Pituitary_data$Name)
+```
+We want the following structure of our pituitary data table:
+Column names: pituitary hormone names (FSH, GH, …)
+Row names: animal code names (A_001, A_002, …) 
+Remove all columns, that don’t contain data (eg. the names column…)
+Log-transform the pituitary data for analysis (use log() function)
+```{r}
+rownames(Pituitary_data)<- Pituitary_data$Name
+Pituitary_data<-Pituitary_data[,-1]
+Pituitary_data<- log(Pituitary_data)
+head(Pituitary_data)
+```
+## Linear modelling:
+Time point 1:
+look at the time point 1 (T1), and compare between MSUS and CTRL only; for this we need to:
+get the metadata for T1 only (try sub-setting based on T1)
+get the pituitary data for T1 only 
+```{r}
+metaT1<-meta_pit[meta_pit$Timepoint=="T1",]
+pituT1<-Pituitary_data[metaT1$Name,]
+head(metaT1)
+head(pituT1)
+```
+Then make a model matrix, where we model the hormonal levels on “Group” (MSUS/CTRL) 
+model.matrix() allows us to crate create dummy variables (we have the controls as baseline)
+```{r}
+matrixGroup<-model.matrix(~Group, data = metaT1)
+head(matrixGroup)
+```
+Fit the linear model
+```{r}
+fit <- eBayes(lmFit(t(pituT1), matrixGroup))
+```
+coefficients
+```{r}
+fit$coefficients
+```
+p-values
+```{r}
+fit$p.value
+```
+call the topTable() function on your object, to store all results of the model into a new variable
+```{r}
+resultsFit<-topTable(fit,n=Inf)
+topTable(fit,n=Inf)
+
+```
+GH is significantly different and down-regulated in MSUS. In fact, the MSUS mice are generally smaller than Control.
+
+Save table 
+```{r}
+write.csv(resultsFit, paste0(path, "Hormones_T1.csv"))
+```
+plotting 
+```{r}
+hormone<-c(rep("FSH",46),rep("GH",46),rep("LH",46),rep("Prolactin",46),rep("TSH",46))
+level<- c(pituT1$FSH,pituT1$GH,pituT1$LH,pituT1$Prolactin,pituT1$TSH)
+group<-c(rep(metaT1$Group,5))
+df<-data.frame(hormone,level,group)
+
+ggplot(df, aes(x=hormone, y=level, fill= group))+
+  geom_boxplot()+
+  geom_point(position=position_dodge(width=0.75), aes(group=group)) +
+  annotate("text", x=2,y=5,label=paste0("P=",round(resultsFit$P.Value[1], digits=5)))+
+  annotate("text", x=5,y=4,label=paste0("P=",round(resultsFit$P.Value[2], digits=5)))+
+  annotate("text", x=3,y=7,label=paste0("P=",round(resultsFit$P.Value[3], digits=5)))+
+  annotate("text", x=1,y=8,label=paste0("P=",round(resultsFit$P.Value[4], digits=5)))+
+  annotate("text", x=4,y=7.5,label=paste0("P=",round(resultsFit$P.Value[5], digits=5)))+
+  xlab("Hormone") +
+  ylab("log(Level)") +
+  labs(title="Hormone levels in Control and MSUS mice at T1") 
+```
+
+## Full model
+reloading full dateset 
+```{r}
+rm(list=ls())
+path<-"~/Documents/ETH/Eth_VI.SS21/BC_Epigenetic_Mechanisms_in_MentalHealth/Project_5_Materials-20210318/Data/"
+Pituitary_data<- read.csv("Pituitary_Data.csv", header= T)
+meta_pit <- read.csv("metadata_pit.csv")
+
+```
+Select  the parameters in the metadata that  are of biological importance for the linear model: 
+Time point, group,  (ev individual), , housing is then removed because present only at T2 and T3.
+
+```{r}
+##define the levels
+meta_pit$Housing<-relevel(as.factor(meta_pit$Housing),"SH")
+levels(as.factor(meta_pit$Housing))
+levels(as.factor(meta_pit$Timepoint))
+levels(as.factor(meta_pit$Group))
+levels(as.factor(meta_pit$Number))
+```
+Model matrix
+```{r}
+mm<-model.matrix(~Group*Timepoint*Housing,data = meta_pit)
+head(mm)
+```
+
+## Fit the model 
+sub-setting the model matrix
+```{r}
+mmTime<-mm[,c(1:4,6:8)]
+rownames(Pituitary_data)<- Pituitary_data$Name
+Pituitary_data<-Pituitary_data[,-1]
+Pituitary_data<-log(Pituitary_data)
+head(mmTime)
+```
+fit the model
+```{r}
+fitfull <- eBayes(lmFit(t(Pituitary_data), mmTime))
+```
+coefficients 
+```{r}
+fitfull$coefficients
+```
+p-values
+```{r}
+fitfull$p.value
+```
+toptable
+```{r}
+topTable(fitfull,n=Inf)
+resultsfullTime<-topTable(fitfull,n=Inf)
+resultsfullTime
+```
+saving stats for each coefficient 
+```{r}
+cols<-colnames(mmTime)
+for (i in (1:length(cols))){
+  res<-topTable(fitfull,coef=cols[i])
+  write.csv(res, paste0(path,"results_half_model/","Hormones_Time",cols[i],".csv"))
+  
+}
+```
+## New model full model
+subs-setting dataset for all without Housing and MSUSxHousing
+```{r}
+mmfull2<-mm[,-c(5,8)]
+head(mmfull2)
+```
+fit the linear model 
+```{r}
+fitfull2 <- eBayes(lmFit(t(Pituitary_data), mmfull2))
+```
+coefficients
+```{r}
+fitfull2$coefficients
+```
+p-values
+```{r}
+fitfull2$p.value
+```
+toptable
+```{r}
+topTable(fitfull2,n=Inf)
+resultsfull2<-topTable(fitfull2,n=Inf)
+```
+saving stats for each coefficient
+```{r}
+cols<-colnames(mmfull2)
+for (i in (1:length(cols))){
+  res2<-topTable(fitfull2,coef=cols[i])
+  write.csv(res, paste0(path,"results_half_model/","Hormones_full_",cols[i],".csv"))
+  }
+```
+GH is the only hormone significant in first full model
+Box-plot for GH over time 
+```{r}
+
+combination<-c()
+for (j in 1:137) {
+ combination[j]<- paste0(meta_pit$Group[j], meta_pit$Housing[j])
+}
+dfGH<-data.frame(Pituitary_data$GH,meta_pit$Timepoint,meta_pit$Group,combination)
+
+
+ggplot(dfGH, aes(y=Pituitary_data.GH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+    
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of GH at different time points")+
+  labs(fill="groups")
+```
+```{r}
+hormone2<-c(rep("FSH",137),rep("GH",137),rep("LH",137),rep("Prolactin",137),rep("TSH",137))
+level2<- c(Pituitary_data$FSH,Pituitary_data$GH,Pituitary_data$LH,Pituitary_data$Prolactin,Pituitary_data$TSH)
+dfMSUS<-data.frame(hormone2,level2,meta_pit$Group,meta_pit$Housing,meta_pit$Timepoint,combination)
+
+```
+Box-plot showing the level of hormones for the different group combinations at different time points
+```{r}
+
+ggplot(dfMSUS[meta_pit$Timepoint=="T1",], aes(x=hormone2, y=level2, fill=combination))+
+  geom_boxplot()+
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Hormones") +
+  ylab("log(Level)") +
+  labs(fill="groups")+
+  labs(title="Hormones levels at time points T1") 
+```
+```{r}
+ggplot(dfMSUS[meta_pit$Timepoint=="T2",], aes(x=hormone2, y=level2, fill=combination))+
+  geom_boxplot()+
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Hormones") +
+  ylab("log(Level)") +
+  labs(fill="groups")+
+  labs(title="Hormones levels at time points T2") 
+```
+```{r}
+ggplot(dfMSUS[meta_pit$Timepoint=="T3",], aes(x=hormone2, y=level2, fill=combination))+
+  geom_boxplot()+
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Hormones") +
+  ylab("log(Level)") +
+  labs(fill="groups")+
+  labs(title="Hormones levels at time points T3") 
+```
+```{r}
+dfProlactin<-data.frame(Pituitary_data$Prolactin,meta_pit$Timepoint,meta_pit$Group,combination)
+ggplot(dfProlactin, aes(y=Pituitary_data.Prolactin, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of Prolactin at different time points")+
+  labs(fill="groups")
+```
+```{r}
+dfLH<-data.frame(Pituitary_data$LH,meta_pit$Timepoint,meta_pit$Group,combination)
+ggplot(dfLH, aes(y=Pituitary_data.LH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of LH at different time points")+
+  labs(fill="groups")
+```
+```{r}
+dfFSH<-data.frame(Pituitary_data$FSH,meta_pit$Timepoint,meta_pit$Group,combination)
+ggplot(dfFSH, aes(y=Pituitary_data.FSH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of FSH at different time points")+
+  labs(fill="groups")
+```
+```{r}
+dfTSH<-data.frame(Pituitary_data$TSH,meta_pit$Timepoint,meta_pit$Group,combination)
+ggplot(dfTSH, aes(y=Pituitary_data.TSH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of TSH at different time points")+
+  labs(fill="groups")
+```
+Trend of FSH, TSH 
+```{r}
+ggplot(dfFSH[combination =="CONSH",], aes(y=Pituitary_data.FSH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of FSH at different time points")+
+  labs(fill="groups")
+```
+```{r}
+ggplot(dfTSH[combination =="CONSH",], aes(y=Pituitary_data.TSH, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of TSH at different time points")+
+  labs(fill="groups")
+```
+Plot prolactin only at time point T2 and T3 (only for presentation purpose)
+```{r}
+ggplot(dfProlactin[dfProlactin$meta_pit.Timepoint!="T1",], aes(y=Pituitary_data.Prolactin, x=meta_pit.Timepoint, fill=combination))+
+  geom_boxplot()+ 
+  geom_point(position=position_dodge(width=0.75), aes(group=combination))+
+  xlab("Time point") +
+  ylab("log(Level)") +
+  labs(title="Levels of Prolactin at different time points")+
+  labs(fill="groups")
+```
+why we can't use Housing EE in the model
+```{r}
+metaT1T2<-meta_pit[meta_pit$Timepoint!="T3",]
+rownames(metaT1T2)<-metaT1T2$Name
+pit12<-Pituitary_data[rownames(metaT1T2),]
+summary(lm(pit12$GH~metaT1T2$Timepoint*metaT1T2$Housing))
+
+```
+we have no date for Housing EE at T1
